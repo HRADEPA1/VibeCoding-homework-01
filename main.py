@@ -489,7 +489,6 @@ def search_public_transport(from_location: str, to_event_address: str) -> dict[s
     }
 
 
-
 # ---------------------------------------------------------------------------
 # OpenAI Tool / Function schemas
 # ---------------------------------------------------------------------------
