@@ -4,6 +4,13 @@ main.py – LLM Function Calling Assistant: "What Next" Activity Recommender
 Uses OpenAI's Tool Use (Function Calling) to recommend activities based on
 the user's location, age, current time and season.
 
+Supports two backends (configured via .env):
+  1. Remote OpenAI API  – set OPENAI_API_KEY (requires a paid/free-trial account)
+  2. Local AI server    – set OPENAI_BASE_URL to your local endpoint
+                          (Ollama: http://localhost:11434/v1
+                           LM Studio: http://localhost:1234/v1)
+                          No real API key is needed for local backends.
+
 Run:
     python main.py
 """
@@ -22,14 +29,23 @@ from openai import OpenAI
 
 load_dotenv()
 
-_api_key = os.getenv("OPENAI_API_KEY")
-if not _api_key:
-    raise EnvironmentError(
-        "OPENAI_API_KEY is not set. "
-        "Copy .env.example to .env and fill in your key."
-    )
+_api_key = os.getenv("OPENAI_API_KEY", "")
+_base_url = os.getenv("OPENAI_BASE_URL", "").strip() or None
+_model = os.getenv("MODEL_NAME", "").strip() or "gpt-4o-mini"
 
-client = OpenAI(api_key=_api_key)
+# For local backends (Ollama, LM Studio) a real API key is not required.
+# We fall back to the placeholder "local" so the SDK does not complain.
+if not _api_key:
+    if _base_url:
+        _api_key = "local"
+    else:
+        raise EnvironmentError(
+            "OPENAI_API_KEY is not set and no OPENAI_BASE_URL is configured.\n"
+            "  • For the remote OpenAI API: copy .env.example to .env and add your key.\n"
+            "  • For a local AI (Ollama / LM Studio): set OPENAI_BASE_URL in .env."
+        )
+
+client = OpenAI(api_key=_api_key, base_url=_base_url)
 
 # ---------------------------------------------------------------------------
 # Helper: determine the current season (Northern Hemisphere)
@@ -268,7 +284,10 @@ def run_conversation() -> None:
     The loop continues until the user types 'exit' or 'quit'.
     """
     print("=" * 60)
-    print("  What Next? – Activity Recommender (powered by OpenAI)")
+    backend_label = _base_url if _base_url else "OpenAI API"
+    print(f"  What Next? – Activity Recommender")
+    print(f"  Backend : {backend_label}")
+    print(f"  Model   : {_model}")
     print("  Type 'exit' or 'quit' to stop.")
     print("=" * 60)
 
@@ -288,7 +307,7 @@ def run_conversation() -> None:
         while True:
             try:
                 response = client.chat.completions.create(
-                    model="gpt-4o-mini",
+                    model=_model,
                     messages=messages,
                     tools=TOOLS,
                     tool_choice="auto",

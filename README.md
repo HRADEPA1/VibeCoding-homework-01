@@ -13,11 +13,14 @@
 3. [Project structure](#3-project-structure)
 4. [Prerequisites](#4-prerequisites)
 5. [Setup – step by step (for beginners)](#5-setup--step-by-step-for-beginners)
+   - [Option A – Remote OpenAI API](#option-a--remote-openai-api-requires-an-api-key)
+   - [Option B – Local AI with Ollama (free, no API key)](#option-b--local-ai-with-ollama-free-no-api-key)
+   - [Option C – Local AI with LM Studio (free, no API key)](#option-c--local-ai-with-lm-studio-free-no-api-key)
 6. [Running the application](#6-running-the-application)
 7. [Example conversation](#7-example-conversation)
 8. [Running with GitHub Copilot Agent / Remote Agent](#8-running-with-github-copilot-agent--remote-agent)
 9. [Troubleshooting](#9-troubleshooting)
-10. [How to get an OpenAI API key](#10-how-to-get-an-openai-api-key)
+10. [How to get an OpenAI API key](#10-how-to-get-an-openai-api-key-optional)
 
 ---
 
@@ -89,12 +92,13 @@ VibeCoding-homework-01/
 
 ## 4. Prerequisites
 
-| What you need | Minimum version | Where to get it |
+The application supports **two modes**. Choose the one that fits you:
+
+| Mode | What you need | Cost |
 |---|---|---|
-| **Python** | 3.10+ | https://www.python.org/downloads/ |
-| **pip** | bundled with Python | — |
-| **OpenAI API key** | — | https://platform.openai.com/api-keys |
-| **Internet connection** | — | required for the OpenAI API |
+| **Remote OpenAI API** | Python 3.10+, OpenAI API key | Paid (free trial credits available) |
+| **Local AI – Ollama** | Python 3.10+, Ollama installed | Free |
+| **Local AI – LM Studio** | Python 3.10+, LM Studio installed | Free |
 
 > **Windows users:** During Python installation tick **"Add Python to PATH"**.
 
@@ -142,24 +146,80 @@ pip install -r requirements.txt
 ```
 
 This installs:
-- **openai** – the official OpenAI Python SDK.
-- **python-dotenv** – reads the `.env` file so your API key stays out of the code.
+- **openai** – the official OpenAI Python SDK (also works with local servers).
+- **python-dotenv** – reads the `.env` file so credentials stay out of the code.
 
-### Step 4 – Add your OpenAI API key
+### Step 4 – Configure your AI backend
 
-1. Copy the example file:
+Copy the example file first:
+```bash
+# macOS / Linux
+cp .env.example .env
+
+# Windows (Command Prompt)
+copy .env.example .env
+```
+
+Then open `.env` and follow **one** of the three options below.
+
+> **Never share your `.env` file or commit it to GitHub.** It is already listed in `.gitignore`.
+
+---
+
+#### Option A – Remote OpenAI API (requires an API key)
+
+Edit `.env` so it contains:
+```
+OPENAI_API_KEY=sk-...your-key-here...
+# MODEL_NAME=gpt-4o-mini   ← optional, this is the default
+```
+
+The app will call OpenAI's servers. You need a paid account or free-trial credits.
+See [section 10](#10-how-to-get-an-openai-api-key-optional) for how to get a key.
+
+---
+
+#### Option B – Local AI with Ollama (free, no API key)
+
+[Ollama](https://ollama.com) runs open-source models on your own computer.
+No API key, no internet needed after the model is downloaded.
+
+1. **Install Ollama** – download from https://ollama.com/download  
+   (Available for macOS, Linux, and Windows.)
+
+2. **Pull a model** that supports tool/function calling:
    ```bash
-   # macOS / Linux
-   cp .env.example .env
-
-   # Windows (Command Prompt)
-   copy .env.example .env
+   ollama pull llama3.1
    ```
-2. Open `.env` with any text editor (Notepad, VS Code, etc.).
-3. Replace `sk-...your-key-here...` with your real API key (see [section 10](#10-how-to-get-an-openai-api-key)).
-4. Save the file.
+   Other good choices: `mistral-nemo`, `qwen2.5`, `command-r`.
 
-> ⚠️ **Never share your `.env` file or commit it to GitHub.** It is already listed in `.gitignore`.
+3. Ollama starts automatically in the background. No extra command needed.
+
+4. Edit `.env` so it looks like this (comment out or remove `OPENAI_API_KEY`):
+   ```
+   OPENAI_BASE_URL=http://localhost:11434/v1
+   MODEL_NAME=llama3.1
+   ```
+
+---
+
+#### Option C – Local AI with LM Studio (free, no API key)
+
+[LM Studio](https://lmstudio.ai) is a desktop app that downloads and runs models locally with a graphical interface.
+
+1. **Install LM Studio** – download from https://lmstudio.ai
+
+2. Inside LM Studio, go to the **Discover** tab and download a model  
+   (e.g. *Mistral-7B-Instruct*, *Llama-3.1-8B-Instruct*, or *Qwen2.5-7B-Instruct*).
+
+3. Go to the **Local Server** tab and click **Start Server**.
+
+4. Edit `.env`:
+   ```
+   OPENAI_BASE_URL=http://localhost:1234/v1
+   MODEL_NAME=mistral-7b-instruct
+   ```
+   (Use the model identifier that LM Studio shows in the server tab.)
 
 ---
 
@@ -167,6 +227,16 @@ This installs:
 
 ```bash
 python main.py
+```
+
+The startup banner shows which backend and model is active:
+```
+============================================================
+  What Next? – Activity Recommender
+  Backend : http://localhost:11434/v1
+  Model   : llama3.1
+  Type 'exit' or 'quit' to stop.
+============================================================
 ```
 
 The assistant will greet you and ask for your age and location (city + street).  
@@ -237,15 +307,18 @@ GitHub Copilot Agent can read repository secrets. Add your OpenAI API key as a *
 | Problem | Solution |
 |---|---|
 | `ModuleNotFoundError: No module named 'openai'` | Run `pip install -r requirements.txt` |
-| `EnvironmentError: OPENAI_API_KEY is not set` | Make sure you created `.env` from `.env.example` and added your key |
-| `AuthenticationError` from OpenAI | Your API key is wrong or has expired – check https://platform.openai.com/api-keys |
-| `RateLimitError` | You have hit the API rate limit – wait a few seconds and try again |
-| Python version error (`match` or walrus syntax) | Upgrade to Python 3.10 or newer |
+| `EnvironmentError: OPENAI_API_KEY is not set…` | Either add your API key **or** set `OPENAI_BASE_URL` in `.env` for a local backend |
+| `AuthenticationError` from OpenAI | Your API key is wrong or expired – check https://platform.openai.com/api-keys |
+| `RateLimitError` | You hit the API rate limit – wait a few seconds and try again |
+| `Connection refused` on `localhost:11434` | Ollama is not running – install it from https://ollama.com/download |
+| `Connection refused` on `localhost:1234` | LM Studio server is not started – open LM Studio → Local Server → Start Server |
+| Model does not call the tool (Ollama/LM Studio) | Use a model that supports function calling, e.g. `llama3.1`, `mistral-nemo`, `qwen2.5` |
+| Python version error | Upgrade to Python 3.10 or newer |
 | The assistant does not ask for location | It already has context – simply provide your city and street |
 
 ---
 
-## 10. How to get an OpenAI API key
+## 10. How to get an OpenAI API key (optional)
 
 1. Go to https://platform.openai.com/signup and create a free account.
 2. After signing in, go to https://platform.openai.com/api-keys.
