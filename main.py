@@ -81,6 +81,7 @@ def get_current_season() -> str:
 
 # Maps age-group label → (min_age, max_age) inclusive.
 # "senior" has no practical upper bound.
+# Reserved for future age-range validation and display logic.
 _AGE_GROUP_RANGES: dict[str, tuple[int, int]] = {
     "child":       (0,  12),
     "teen":        (13, 17),
@@ -251,7 +252,8 @@ def get_recommendations(
 # Tool 2: search_activities_web
 # ---------------------------------------------------------------------------
 
-_WEB_SEARCH_RESULT_LIMIT = 3000  # characters of extracted text to return
+_WEB_SEARCH_MAX_CHARS = 3000  # maximum characters of extracted text to return
+_CONSOLE_PREVIEW_LENGTH = 300  # characters of tool result shown in the console
 
 
 def search_activities_web(location: str, interests: str) -> dict[str, Any]:
@@ -296,7 +298,7 @@ def search_activities_web(location: str, interests: str) -> dict[str, Any]:
 
     return {
         "query": query,
-        "results": text[:_WEB_SEARCH_RESULT_LIMIT],
+        "results": text[:_WEB_SEARCH_MAX_CHARS],
     }
 
 
@@ -458,7 +460,7 @@ def run_conversation() -> None:
     while True:
         user_input = input("\nYou: ").strip()
         if user_input.lower() in ("exit", "quit", ""):
-            print("Goodbye! / Nashledanou!")
+            print("Goodbye!")
             break
 
         messages.append({"role": "user", "content": user_input})
@@ -494,7 +496,7 @@ def run_conversation() -> None:
 
                     tool_result = dispatch_tool_call(fn_name, fn_args)
 
-                    print(f"[TOOL RESULT] {tool_result[:300]}{'…' if len(tool_result) > 300 else ''}")
+                    print(f"[TOOL RESULT] {tool_result[:_CONSOLE_PREVIEW_LENGTH]}{'…' if len(tool_result) > _CONSOLE_PREVIEW_LENGTH else ''}")
 
                     messages.append(
                         {
