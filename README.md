@@ -30,12 +30,15 @@ You chat with an AI assistant and it recommends activities (cinema, gym, yoga, h
 
 - **Age-appropriate** – you can give your exact age, or just describe your last activity and the assistant estimates your age group.
 - **Available right now** – outdoor activities are not offered after dark. Time is auto-detected; you are never asked for it.
+- **Weather-aware** – the assistant fetches the current forecast from [wttr.in](https://wttr.in) (no API key). Outdoor activities are suppressed when the forecast shows rain, storms, heavy wind, or extreme cold.
 - **Suited to the current season** – determined automatically from the system clock.
 - **Planned across three horizons:**
   - 🕐 **Short (today / day)** – what can you do in the next few hours?
   - 📅 **Mid (this week)** – recurring or weekly-routine activities
   - 🗓️ **Long (this month)** – seasonal events and monthly planning
-- **Live web results** – the assistant uses [trafilatura](https://trafilatura.readthedocs.io) to fetch real local activity listings from the web to complement the built-in catalogue.
+- **Rich event details** – live web search (trafilatura) queries for venue name, street address, start time, and website URL.
+- **Radius-expanding search** – starts with walking-distance (≈ 2 km) and automatically widens to 5 km and 15 km when nearby results are sparse.
+- **Public transport** – after you pick an activity, the assistant can search for bus / tram / metro / train options to get you there.
 
 The assistant speaks in **Czech, English, or any language you use**.
 
@@ -45,41 +48,51 @@ The assistant speaks in **Czech, English, or any language you use**.
 
 Traditional LLMs can only generate text. **Tool Use** (also called *Function Calling*) lets the model call a Python function during a conversation to fetch real data.
 
-This application exposes **two tools**:
+This application exposes **four tools**:
+
+| Tool | Purpose |
+|---|---|
+| `get_weather_forecast` | Fetches current conditions + 3-day forecast from wttr.in. Returns `outdoor_suitable` flag. |
+| `get_recommendations` | Filters the built-in catalogue by age, time of day, season, and planning horizon. |
+| `search_activities_web` | Trafilatura web search for live events. Includes venue, address, start time, URL. Radius-expanding. |
+| `search_public_transport` | Searches for transit options between the user and the event venue. |
 
 ```
 User says:  "I'm in Prague, Wenceslas Square – I did yoga this morning"
                           │
                           ▼
-          ┌─────────────────────────────────────────┐
-          │  LLM infers age_group="young_adult"     │
-          │  Time & season auto-detected (no ask)   │
-          │                                          │
-          │  calls: get_recommendations(             │
-          │    location="Prague, Wenceslas Square", │
-          │    age_group="young_adult",              │
-          │    horizon="day"                         │
-          │  )                                       │
-          │  calls: search_activities_web(           │
-          │    location="Prague, Czech Republic",   │
-          │    interests="yoga, outdoor"             │
-          │  )                                       │
-          └──────────────────┬──────────────────────┘
-                             │ [TOOL CALL] logged to console
+          ┌─────────────────────────────────────────────┐
+          │  LLM infers age_group="young_adult"         │
+          │  Time & season auto-detected (no ask)       │
+          │                                              │
+          │  calls: get_weather_forecast(               │
+          │    location="Prague, Czech Republic")       │
+          │  → outdoor_suitable=true, 18°C, clear       │
+          │                                              │
+          │  calls: get_recommendations(                │
+          │    location="Prague, Wenceslas Square",     │
+          │    age_group="young_adult", horizon="day")  │
+          │                                              │
+          │  calls: search_activities_web(              │
+          │    location="Prague, Czech Republic",       │
+          │    interests="yoga, outdoor", radius_km=2)  │
+          └──────────────────┬──────────────────────────┘
+                             │ [TOOL CALL/RESULT] in console
                              ▼
-          ┌─────────────────────────────────────────┐
-          │  Python: catalogue filter + trafilatura │
-          │  web fetch → returns activity lists      │
-          └──────────────────┬──────────────────────┘
-                             │ [TOOL RESULT] logged to console
+          ┌─────────────────────────────────────────────┐
+          │  LLM groups results by horizon:             │
+          │   🕐 Today │ 📅 This week │ 🗓️ Month        │
+          │  Each activity shows: venue, address,       │
+          │  start time, website                        │
+          └──────────────────┬──────────────────────────┘
                              ▼
-          ┌─────────────────────────────────────────┐
-          │  LLM reads results, groups by horizon:  │
-          │    🕐 Today  │  📅 This week  │ 🗓️ Month │
-          └──────────────────┬──────────────────────┘
-                             │ [ASSISTANT RESPONSE]
+        "Here are some ideas for you nearby: …"
+        "Want directions? I can look up public transport!"
+                             │ user says yes
                              ▼
-        "Here are some ideas for you: …"
+          calls: search_public_transport(
+            from_location="Prague, Wenceslas Square",
+            to_event_address="Yoga Studio Praha, Vinohradská 12")
 ```
 
 The console prints **`[TOOL CALL]`** and **`[TOOL RESULT]`** so you can follow every step.
@@ -358,6 +371,8 @@ GitHub Copilot Agent can read repository secrets. Add your OpenAI API key as a *
 | Model does not call the tool (Ollama/LM Studio) | Use a model that supports function calling, e.g. `llama3.1`, `mistral-nemo`, `qwen2.5` |
 | Python version error | Upgrade to Python 3.10 or newer |
 | Web search returns empty results | DuckDuckGo may have temporarily blocked the request – try again in a few seconds |
+| `get_weather_forecast` always returns `outdoor_suitable=true` | The wttr.in request timed out – check internet connectivity |
+| No public transport results | The search returned no transit info – try a broader destination description |
 | The assistant asks for time or season | Upgrade to the latest code; time/season are now always auto-detected |
 
 ---

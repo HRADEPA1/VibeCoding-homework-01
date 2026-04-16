@@ -5,10 +5,19 @@ Uses OpenAI's Tool Use (Function Calling) to recommend activities based on
 the user's location, age group, current time (auto-detected), and season
 (auto-detected from system clock).
 
-NEW in this version
--------------------
+Features
+--------
 • trafilatura web search – fetches real local activity listings from the web.
   The search query is constructed from the user's location and interests.
+  Searches start near the user (walking distance) and expand radius
+  automatically when nearby results are sparse.
+• Rich event details – web queries request venue name, address, start time,
+  and website URL so recommendations are actionable.
+• Weather-aware – get_weather_forecast() fetches the current forecast from
+  wttr.in (no API key). Outdoor activities are suppressed when the weather
+  is unsuitable (rain, storm, heavy wind, etc.).
+• Public transport – search_public_transport() finds transit options between
+  the user's location and a chosen event address.
 • Age inference – if the user does not state their age, the assistant asks
   about their last activity and estimates an age group instead.
 • Three-horizon planning:
@@ -27,6 +36,7 @@ Run:
 import json
 import os
 import urllib.parse
+import urllib.request
 from datetime import datetime
 from typing import Any
 
@@ -252,29 +262,201 @@ def get_recommendations(
 # Tool 2: search_activities_web
 # ---------------------------------------------------------------------------
 
-_WEB_SEARCH_MAX_CHARS = 3000  # maximum characters of extracted text to return
+_WEB_SEARCH_MAX_CHARS = 4000  # maximum characters of extracted text to return
 _CONSOLE_PREVIEW_LENGTH = 300  # characters of tool result shown in the console
 
+# Weather codes from WorldWeatherOnline / wttr.in that indicate unsuitable
+# conditions for outdoor activities (rain, snow, sleet, fog, thunderstorms).
+_BAD_WEATHER_CODES: frozenset[int] = frozenset({
+    176, 179, 182, 185, 200, 227, 230, 248, 260,
+    263, 266, 281, 284, 293, 296, 299, 302, 305, 308,
+    311, 314, 317, 320, 323, 326, 329, 332, 335, 338,
+    350, 353, 356, 359, 362, 365, 368, 371, 374, 377,
+    386, 389, 392, 395,
+})
+_WIND_UNSUITABLE_KMPH = 50   # wind speed above which outdoor is unsuitable
+_FEELS_LIKE_MIN_C = -5       # feels-like temperature below which outdoor is unsuitable
 
-def search_activities_web(location: str, interests: str) -> dict[str, Any]:
+
+def search_activities_web(
+    location: str,
+    interests: str,
+    radius_km: int = 2,
+) -> dict[str, Any]:
     """Search the web for real local activities using trafilatura.
 
-    Constructs a natural-language query from the location and the user's
-    interests, fetches DuckDuckGo HTML results, and extracts the main text.
+    Constructs a rich natural-language query from the location, interests,
+    and search radius. Includes terms that help surface event details such
+    as venue name, address, start time, and website.
 
     Args:
         location:  City/neighbourhood, e.g. "Brno, Czech Republic".
         interests: Comma-separated interests or activity keywords gathered
                    from the conversation, e.g. "outdoor, hiking, family".
+        radius_km: Search radius in kilometres. Use 1-2 for walking distance,
+                   5 for neighbourhood, 15 for whole city. The model should
+                   start small and call again with a larger radius when the
+                   first call returns insufficient results.
 
     Returns:
-        A dict with the search query used and extracted text snippets.
+        A dict with the search query used, the radius, and extracted text.
     """
     now = datetime.now()
     season = get_current_season()
     day_str = now.strftime("%A")  # e.g. "Wednesday"
+    date_str = now.strftime("%d %B %Y")
 
-    query = f"{interests} activities {location} {season} {day_str}"
+    # Build a radius-aware location hint
+    city = location.split(",")[0].strip()
+    if radius_km <= 2:
+        location_hint = f"near {location} walking distance"
+    elif radius_km <= 7:
+        location_hint = f"within {radius_km} km of {location}"
+    elif radius_km <= 20:
+        location_hint = f"in {city}"
+    else:
+        location_hint = location
+
+    query = (
+        f"{interests} activities {location_hint} {season} {day_str} {date_str} "
+        f"venue address schedule opening hours website tickets"
+    )
+    encoded_query = urllib.parse.quote_plus(query)
+    search_url = f"https://html.duckduckgo.com/html/?q={encoded_query}"
+
+    try:
+        downloaded = trafilatura.fetch_url(search_url)
+    except Exception as exc:
+        return {"error": f"Fetch failed: {exc}", "results": "", "radius_km": radius_km}
+
+    if not downloaded:
+        return {"error": "No content returned from search engine", "results": "", "radius_km": radius_km}
+
+    text = trafilatura.extract(
+        downloaded,
+        include_links=True,
+        no_fallback=False,
+        favor_recall=True,
+    )
+
+    if not text:
+        return {"query": query, "radius_km": radius_km, "results": "No readable content could be extracted."}
+
+    return {
+        "query": query,
+        "radius_km": radius_km,
+        "results": text[:_WEB_SEARCH_MAX_CHARS],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Tool 3: get_weather_forecast
+# ---------------------------------------------------------------------------
+
+def get_weather_forecast(location: str) -> dict[str, Any]:
+    """Fetch the current weather and 3-day forecast from wttr.in (no API key needed).
+
+    Uses the public wttr.in JSON API.  Returns structured weather data
+    including an ``outdoor_suitable`` flag so callers can decide whether to
+    recommend outdoor activities.
+
+    Args:
+        location: City or address, e.g. "Brno, Czech Republic".
+
+    Returns:
+        A dict with current conditions, a 3-day forecast array, and
+        ``outdoor_suitable`` (bool).  On error the function returns
+        ``outdoor_suitable=True`` so the conversation is never blocked.
+    """
+    url = f"https://wttr.in/{urllib.parse.quote_plus(location)}?format=j1"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "WhatNextApp/1.0"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode())
+    except Exception as exc:
+        return {
+            "error": str(exc),
+            "outdoor_suitable": True,
+            "note": "Weather check failed – assuming outdoor is OK",
+        }
+
+    current = data.get("current_condition", [{}])[0]
+    weather_code = int(current.get("weatherCode", "113"))
+    temp_c = int(current.get("temp_C", "20"))
+    feels_like_c = int(current.get("FeelsLikeC", str(temp_c)))
+    wind_kmph = int(current.get("windspeedKmph", "0"))
+    humidity = int(current.get("humidity", "50"))
+    desc = current.get("weatherDesc", [{}])[0].get("value", "Unknown")
+
+    outdoor_suitable = (
+        weather_code not in _BAD_WEATHER_CODES
+        and wind_kmph < _WIND_UNSUITABLE_KMPH
+        and feels_like_c > _FEELS_LIKE_MIN_C
+    )
+
+    if not outdoor_suitable:
+        if weather_code in _BAD_WEATHER_CODES:
+            reason = f"precipitation/storm (code {weather_code})"
+        elif wind_kmph >= _WIND_UNSUITABLE_KMPH:
+            reason = f"strong wind ({wind_kmph} km/h)"
+        else:
+            reason = f"very cold (feels like {feels_like_c}°C)"
+    else:
+        reason = None
+
+    forecast = []
+    for day in data.get("weather", [])[:3]:
+        hourly = day.get("hourly", [])
+        midday = hourly[4] if len(hourly) > 4 else (hourly[0] if hourly else {})
+        day_code = int(midday.get("weatherCode", "113"))
+        day_desc = midday.get("weatherDesc", [{}])[0].get("value", "")
+        forecast.append(
+            {
+                "date": day.get("date", ""),
+                "max_temp_c": day.get("maxtempC", ""),
+                "min_temp_c": day.get("mintempC", ""),
+                "description": day_desc,
+                "outdoor_suitable": day_code not in _BAD_WEATHER_CODES,
+            }
+        )
+
+    return {
+        "location": location,
+        "current": {
+            "description": desc,
+            "temp_c": temp_c,
+            "feels_like_c": feels_like_c,
+            "wind_kmph": wind_kmph,
+            "humidity_pct": humidity,
+        },
+        "outdoor_suitable": outdoor_suitable,
+        "outdoor_unsuitable_reason": reason,
+        "forecast": forecast,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Tool 4: search_public_transport
+# ---------------------------------------------------------------------------
+
+def search_public_transport(from_location: str, to_event_address: str) -> dict[str, Any]:
+    """Search for public transport options between the user's location and an event.
+
+    Uses trafilatura to fetch DuckDuckGo search results for transit directions.
+    Looks for bus, tram, metro, and train options.
+
+    Args:
+        from_location:    User's current location, e.g. "Brno, Masarykova 10".
+        to_event_address: Destination address or venue name,
+                          e.g. "Janáček Theatre, Brno".
+
+    Returns:
+        A dict with the departure, destination, and extracted transit text.
+    """
+    query = (
+        f"public transport bus tram metro train directions "
+        f"from {from_location} to {to_event_address}"
+    )
     encoded_query = urllib.parse.quote_plus(query)
     search_url = f"https://html.duckduckgo.com/html/?q={encoded_query}"
 
@@ -288,18 +470,24 @@ def search_activities_web(location: str, interests: str) -> dict[str, Any]:
 
     text = trafilatura.extract(
         downloaded,
-        include_links=False,
+        include_links=True,
         no_fallback=False,
         favor_recall=True,
     )
 
     if not text:
-        return {"query": query, "results": "No readable content could be extracted."}
+        return {
+            "from": from_location,
+            "to": to_event_address,
+            "results": "No transit information found.",
+        }
 
     return {
-        "query": query,
+        "from": from_location,
+        "to": to_event_address,
         "results": text[:_WEB_SEARCH_MAX_CHARS],
     }
+
 
 
 # ---------------------------------------------------------------------------
@@ -354,12 +542,36 @@ TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "get_weather_forecast",
+            "description": (
+                "Fetch the current weather and 3-day forecast for the user's location "
+                "from wttr.in (no API key required). "
+                "Always call this BEFORE recommending activities so you can skip "
+                "outdoor activities when the weather is unsuitable. "
+                "Returns outdoor_suitable=true/false, current conditions, and a forecast."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "location": {
+                        "type": "string",
+                        "description": "City or address, e.g. 'Brno, Czech Republic'.",
+                    },
+                },
+                "required": ["location"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "search_activities_web",
             "description": (
                 "Search the web for real local activities at the user's location. "
-                "Use this to supplement catalogue results with current/live events. "
-                "The season and weekday are injected automatically. "
-                "Call this when the user wants specific or up-to-date suggestions."
+                "Returns venue names, addresses, start times, and website URLs when available. "
+                "Start with radius_km=2 (walking distance). "
+                "If that returns too few results, call again with radius_km=5, then radius_km=15. "
+                "The season and date are injected automatically."
             ),
             "parameters": {
                 "type": "object",
@@ -375,8 +587,45 @@ TOOLS: list[dict[str, Any]] = [
                             "the conversation, e.g. 'outdoor, hiking, family-friendly'."
                         ),
                     },
+                    "radius_km": {
+                        "type": "integer",
+                        "description": (
+                            "Search radius in kilometres. "
+                            "Use 2 for walking distance, 5 for neighbourhood, "
+                            "15 for the whole city. Default is 2."
+                        ),
+                    },
                 },
                 "required": ["location", "interests"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_public_transport",
+            "description": (
+                "Search for public transport options (bus, tram, metro, train) "
+                "between the user's current location and the event address. "
+                "Call this after the user has chosen a specific activity or venue "
+                "to help them get there."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "from_location": {
+                        "type": "string",
+                        "description": "User's current location, e.g. 'Brno, Masarykova 10'.",
+                    },
+                    "to_event_address": {
+                        "type": "string",
+                        "description": (
+                            "Destination address or venue name, "
+                            "e.g. 'Janáček Theatre, Brno, Rooseveltova 1'."
+                        ),
+                    },
+                },
+                "required": ["from_location", "to_event_address"],
             },
         },
     },
@@ -393,8 +642,14 @@ def dispatch_tool_call(name: str, arguments: str) -> str:
     if name == "get_recommendations":
         result = get_recommendations(**args)
         return json.dumps(result, ensure_ascii=False)
+    if name == "get_weather_forecast":
+        result = get_weather_forecast(**args)
+        return json.dumps(result, ensure_ascii=False)
     if name == "search_activities_web":
         result = search_activities_web(**args)
+        return json.dumps(result, ensure_ascii=False)
+    if name == "search_public_transport":
+        result = search_public_transport(**args)
         return json.dumps(result, ensure_ascii=False)
     return json.dumps({"error": f"Unknown tool: {name}"})
 
@@ -421,21 +676,30 @@ def build_system_prompt() -> str:
         "1. Ask for the user's **location** (city + street or neighbourhood).\n"
         "2. For **age**:\n"
         "   a. Ask once: 'How old are you?' (optional, not mandatory).\n"
-        "   b. If they skip or decline, ask: 'What was the last activity you did?' "
-        "      Use their answer to estimate an age group "
+        "   b. If they skip or decline, ask: 'What was the last activity you did?'"
+        "      Use their answer to estimate an age group"
         "      (child / teen / young_adult / adult / senior) and proceed.\n"
-        "   c. Never ask the user for the current time or the season – "
+        "   c. Never ask the user for the current time or the season –"
         "      those are already known.\n"
-        "3. Once you have location and age (or estimated age group), call "
-        "`get_recommendations` with the appropriate horizon.\n"
-        "   • Offer all three horizons (day / week / month) in your reply "
-        "     unless the user specifies one.\n"
-        "   • People naturally plan on three cycles: "
-        "     daily impulse, weekly routine, monthly calendar event.\n"
-        "4. For live/local events, also call `search_activities_web` using the "
-        "   user's location and inferred interests.\n"
-        "5. Present results in a friendly, concise way, grouping them by horizon.\n"
-        "6. Always reply in the same language the user uses.\n"
+        "3. Once you have the location, call `get_weather_forecast` IMMEDIATELY.\n"
+        "   • If outdoor_suitable is false, do NOT suggest outdoor activities.\n"
+        "     Briefly mention the weather reason and offer indoor alternatives only.\n"
+        "   • If outdoor_suitable is true, include outdoor options as appropriate.\n"
+        "4. Call `get_recommendations` with the appropriate horizon for a catalogue view.\n"
+        "   • Offer all three horizons (day / week / month) unless the user picks one.\n"
+        "5. Also call `search_activities_web` for live, real-world events.\n"
+        "   • Start with radius_km=2 (walking distance).\n"
+        "   • If results are sparse (fewer than 3 activities), call again with radius_km=5,"
+        "     then radius_km=15 if still sparse.\n"
+        "   • Extract and present for each activity:\n"
+        "       – venue / building / club name\n"
+        "       – full street address\n"
+        "       – start time and date\n"
+        "       – website or booking link (if found)\n"
+        "6. After listing activities, ask the user if they want directions.\n"
+        "   If yes, call `search_public_transport` with their location and the venue address.\n"
+        "7. Present results grouped by planning horizon (🕐 Today / 📅 Week / 🗓️ Month).\n"
+        "8. Always reply in the same language the user uses.\n"
     )
 
 
