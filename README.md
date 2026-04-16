@@ -15,7 +15,7 @@
 5. [Setup – step by step (for beginners)](#5-setup--step-by-step-for-beginners)
 6. [Running the application](#6-running-the-application)
 7. [Example conversation](#7-example-conversation)
-8. [Running with GitHub Codex / Remote Agent](#8-running-with-github-codex--remote-agent)
+8. [Running with GitHub Copilot Agent / Remote Agent](#8-running-with-github-copilot-agent--remote-agent)
 9. [Troubleshooting](#9-troubleshooting)
 10. [How to get an OpenAI API key](#10-how-to-get-an-openai-api-key)
 
@@ -208,27 +208,27 @@ Enjoy your afternoon!
 
 ---
 
-## 8. Running with GitHub Codex / Remote Agent
+## 8. Running with GitHub Copilot Agent / Remote Agent
 
-GitHub Codex (also known as the GitHub Copilot coding agent) can run this project automatically inside a cloud sandbox. Here is what a developer or maintainer needs to know.
+GitHub Copilot Agent (also known as the GitHub Copilot coding agent) can run this project automatically inside a cloud sandbox. Here is what a developer or maintainer needs to know.
 
-### What is Codex?
+### What is GitHub Copilot Agent?
 
-Codex is an AI-powered agent that can read your repository, understand the code, install dependencies, and run programs – all inside an isolated cloud environment. You do not need to install anything locally.
+GitHub Copilot Agent is an AI-powered agent that can read your repository, understand the code, install dependencies, and run programs – all inside an isolated cloud environment. You do not need to install anything locally.
 
-### Using Codex to run or modify this project
+### Using GitHub Copilot Agent to run or modify this project
 
 1. Open the repository on GitHub.
 2. Click **Copilot** (the chat icon) and start a session.
-3. Ask Codex to, for example:
+3. Ask the agent to, for example:
    - *"Install dependencies and run main.py"*
    - *"Add a new activity to the winter catalogue"*
    - *"Explain how the tool calling loop works"*
-4. Codex will set up the environment (`pip install -r requirements.txt`), read the code, and carry out your request.
+4. The agent will set up the environment (`pip install -r requirements.txt`), read the code, and carry out your request.
 
-### Pre-configuring the API key for Codex
+### Pre-configuring the API key for GitHub Copilot Agent
 
-Codex can read repository secrets. Add your OpenAI API key as a **Codespace / Actions secret** named `OPENAI_API_KEY` in the repository settings (`Settings > Secrets and variables > Codespaces`). The application will pick it up automatically via `python-dotenv` or environment variables.
+GitHub Copilot Agent can read repository secrets. Add your OpenAI API key as a **Codespace / Actions secret** named `OPENAI_API_KEY` in the repository settings (`Settings > Secrets and variables > Codespaces`). The application will pick it up automatically via `python-dotenv` or environment variables.
 
 ---
 
