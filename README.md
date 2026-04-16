@@ -1,8 +1,8 @@
 # VibeCoding-homework-01 – "What Next?" Activity Recommender
 
-> **Czech / Česky:** Python skript, který pomocí OpenAI Function Calling (Tool Use) doporučuje aktivity na základě polohy, věku a denní doby uživatele.
+> **Czech / Česky:** Python skript, který pomocí OpenAI Function Calling (Tool Use) doporučuje aktivity na základě polohy, věku a denní doby uživatele. Čas a roční období jsou detekovány automaticky ze systémových hodin – uživatel se na ně nikdy neptá.
 >
-> **English:** A Python application that uses OpenAI's Function Calling (Tool Use) to recommend activities based on the user's location, age, and current time.
+> **English:** A Python application that uses OpenAI's Function Calling (Tool Use) to recommend activities based on the user's location and age group. Time and season are always auto-detected from the system clock. Activities are looked up both from a built-in catalogue and via live web search (powered by [trafilatura](https://trafilatura.readthedocs.io)).
 
 ---
 
@@ -28,11 +28,16 @@
 
 You chat with an AI assistant and it recommends activities (cinema, gym, yoga, hiking, etc.) that are:
 
-- **Age-appropriate** for you.
-- **Available right now** (outdoor activities are not offered late at night).
-- **Suited to the current season** (e.g. swimming in summer, ice skating in winter).
+- **Age-appropriate** – you can give your exact age, or just describe your last activity and the assistant estimates your age group.
+- **Available right now** – outdoor activities are not offered after dark. Time is auto-detected; you are never asked for it.
+- **Suited to the current season** – determined automatically from the system clock.
+- **Planned across three horizons:**
+  - 🕐 **Short (today / day)** – what can you do in the next few hours?
+  - 📅 **Mid (this week)** – recurring or weekly-routine activities
+  - 🗓️ **Long (this month)** – seasonal events and monthly planning
+- **Live web results** – the assistant uses [trafilatura](https://trafilatura.readthedocs.io) to fetch real local activity listings from the web to complement the built-in catalogue.
 
-The assistant speaks in **Czech or English** (or any language you use).
+The assistant speaks in **Czech, English, or any language you use**.
 
 ---
 
@@ -40,38 +45,44 @@ The assistant speaks in **Czech or English** (or any language you use).
 
 Traditional LLMs can only generate text. **Tool Use** (also called *Function Calling*) lets the model call a Python function during a conversation to fetch real data.
 
+This application exposes **two tools**:
+
 ```
-User says:  "I am 25 years old, I am in Prague, Wenceslas Square"
+User says:  "I'm in Prague, Wenceslas Square – I did yoga this morning"
                           │
                           ▼
-          ┌───────────────────────────────┐
-          │  OpenAI GPT-4o-mini           │
-          │  decides to call a tool:      │
-          │  get_recommendations(         │
-          │    location="Prague, …",      │
-          │    age=25,                    │
-          │    current_time="14:30",      │
-          │    season="spring"            │
-          │  )                            │
-          └───────────┬───────────────────┘
-                      │ [TOOL CALL] logged to console
-                      ▼
-          ┌───────────────────────────────┐
-          │  Python function runs and     │
-          │  returns a list of activities │
-          └───────────┬───────────────────┘
-                      │ [TOOL RESULT] logged to console
-                      ▼
-          ┌───────────────────────────────┐
-          │  GPT-4o-mini reads the result │
-          │  and writes a friendly reply  │
-          └───────────┬───────────────────┘
-                      │ [ASSISTANT RESPONSE]
-                      ▼
+          ┌─────────────────────────────────────────┐
+          │  LLM infers age_group="young_adult"     │
+          │  Time & season auto-detected (no ask)   │
+          │                                          │
+          │  calls: get_recommendations(             │
+          │    location="Prague, Wenceslas Square", │
+          │    age_group="young_adult",              │
+          │    horizon="day"                         │
+          │  )                                       │
+          │  calls: search_activities_web(           │
+          │    location="Prague, Czech Republic",   │
+          │    interests="yoga, outdoor"             │
+          │  )                                       │
+          └──────────────────┬──────────────────────┘
+                             │ [TOOL CALL] logged to console
+                             ▼
+          ┌─────────────────────────────────────────┐
+          │  Python: catalogue filter + trafilatura │
+          │  web fetch → returns activity lists      │
+          └──────────────────┬──────────────────────┘
+                             │ [TOOL RESULT] logged to console
+                             ▼
+          ┌─────────────────────────────────────────┐
+          │  LLM reads results, groups by horizon:  │
+          │    🕐 Today  │  📅 This week  │ 🗓️ Month │
+          └──────────────────┬──────────────────────┘
+                             │ [ASSISTANT RESPONSE]
+                             ▼
         "Here are some ideas for you: …"
 ```
 
-The console will print **`[TOOL CALL]`** whenever the model invokes a function and **`[TOOL RESULT]`** when Python returns the data, so you can follow every step.
+The console prints **`[TOOL CALL]`** and **`[TOOL RESULT]`** so you can follow every step.
 
 ---
 
@@ -99,6 +110,8 @@ The application supports **two modes**. Choose the one that fits you:
 | **Remote OpenAI API** | Python 3.10+, OpenAI API key | Paid (free trial credits available) |
 | **Local AI – Ollama** | Python 3.10+, Ollama installed | Free |
 | **Local AI – LM Studio** | Python 3.10+, LM Studio installed | Free |
+
+The web-search feature (trafilatura) works in all modes and requires only an internet connection.
 
 > **Windows users:** During Python installation tick **"Add Python to PATH"**.
 
@@ -148,6 +161,7 @@ pip install -r requirements.txt
 This installs:
 - **openai** – the official OpenAI Python SDK (also works with local servers).
 - **python-dotenv** – reads the `.env` file so credentials stay out of the code.
+- **trafilatura** – fetches and extracts text from web pages for live activity search.
 
 ### Step 4 – Configure your AI backend
 
@@ -239,7 +253,8 @@ The startup banner shows which backend and model is active:
 ============================================================
 ```
 
-The assistant will greet you and ask for your age and location (city + street).  
+The assistant will greet you and ask for your location and age.  
+**Time and season are never asked** – they are auto-detected from the system clock.  
 Type `exit` or `quit` to stop the session.
 
 ---
@@ -248,7 +263,9 @@ Type `exit` or `quit` to stop the session.
 
 ```
 ============================================================
-  What Next? – Activity Recommender (powered by OpenAI)
+  What Next? – Activity Recommender
+  Backend : OpenAI API
+  Model   : gpt-4o-mini
   Type 'exit' or 'quit' to stop.
 ============================================================
 
@@ -256,22 +273,48 @@ You: Hello
 
 [ASSISTANT RESPONSE] Generating final answer …
 
-Assistant: Hello! I'm here to help you find something fun to do. Could you tell me your age and your location (city and street or neighbourhood)?
+Assistant: Hi! I can suggest activities for today, this week, and this month.
+  Could you tell me your city and neighbourhood?
 
-You: I am 28, I live in Brno, Masarykova Street
+You: I'm in Brno, near Masarykova Street
 
-[TOOL CALL] Model is calling tool 'get_recommendations' with arguments: {"location": "Brno, Masarykova Street", "age": 28, "current_time": "14:30", "season": "winter"}
-[TOOL RESULT] {"location": "Brno, Masarykova Street", "recommendations": [{"name": "Ice skating", ...}]}
+[ASSISTANT RESPONSE] Generating final answer …
 
-[ASSISTANT RESPONSE] Generating final answer ...
+Assistant: Great! How old are you? If you prefer not to say, just tell me
+  what you did last – I'll estimate from there.
 
-Assistant: Great! Here are some activities you can enjoy right now in Brno:
+You: I was at a yoga class this morning
 
-  1. Ice skating - perfect for a winter afternoon!
-  2. Cinema - warm up with a good film.
-  3. Gym / fitness centre - great for a workout.
-  4. Yoga studio - relax and stretch.
-  5. Online course / self-study - invest in yourself!
+[TOOL CALL] 'get_recommendations' ← {"location": "Brno, Masarykova Street",
+                                      "age_group": "young_adult", "horizon": "day"}
+[TOOL RESULT] {"horizon": "day", "season": "winter", "current_time": "14:30", ...}
+
+[TOOL CALL] 'search_activities_web' ← {"location": "Brno, Czech Republic",
+                                        "interests": "yoga, wellness, indoor"}
+[TOOL RESULT] {"query": "yoga wellness indoor activities Brno ...",
+               "results": "Yoga Studio Brno – classes Monday, Wednesday ..."}
+
+[ASSISTANT RESPONSE] Generating final answer …
+
+Assistant: Based on your yoga morning, here is what I suggest:
+
+  🕐 Today
+    1. Yoga studio – evening class available
+    2. Cinema – relax with a film
+    3. Gym / fitness centre – complement your practice
+
+  📅 This week
+    • Yoga (recurring) – check the studio timetable
+    • Board-game café on the weekend
+    • Language exchange meetup
+
+  🗓️ This month
+    • Theatre performance – winter season shows
+    • Ice skating – rink open until February
+    • Online course / self-study
+
+  🌐 From the web (Brno, winter):
+    "Yoga Studio Brno – classes Monday, Wednesday, Friday …"
 
 Enjoy your afternoon!
 ```
@@ -306,7 +349,7 @@ GitHub Copilot Agent can read repository secrets. Add your OpenAI API key as a *
 
 | Problem | Solution |
 |---|---|
-| `ModuleNotFoundError: No module named 'openai'` | Run `pip install -r requirements.txt` |
+| `ModuleNotFoundError: No module named 'openai'` or `'trafilatura'` | Run `pip install -r requirements.txt` |
 | `EnvironmentError: OPENAI_API_KEY is not set…` | Either add your API key **or** set `OPENAI_BASE_URL` in `.env` for a local backend |
 | `AuthenticationError` from OpenAI | Your API key is wrong or expired – check https://platform.openai.com/api-keys |
 | `RateLimitError` | You hit the API rate limit – wait a few seconds and try again |
@@ -314,7 +357,8 @@ GitHub Copilot Agent can read repository secrets. Add your OpenAI API key as a *
 | `Connection refused` on `localhost:1234` | LM Studio server is not started – open LM Studio → Local Server → Start Server |
 | Model does not call the tool (Ollama/LM Studio) | Use a model that supports function calling, e.g. `llama3.1`, `mistral-nemo`, `qwen2.5` |
 | Python version error | Upgrade to Python 3.10 or newer |
-| The assistant does not ask for location | It already has context – simply provide your city and street |
+| Web search returns empty results | DuckDuckGo may have temporarily blocked the request – try again in a few seconds |
+| The assistant asks for time or season | Upgrade to the latest code; time/season are now always auto-detected |
 
 ---
 
